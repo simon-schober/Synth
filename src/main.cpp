@@ -14,6 +14,11 @@
 #include "audio.h"
 #include "imgui_setup.h"
 #include "renderer.h"
+#include "window.h"
+#include "midi.h"
+
+#include <cmath>
+#include <cstdio>
 
 #ifdef _DEBUG
 #define DX12_ENABLE_DEBUG_LAYER
@@ -45,40 +50,72 @@ HANDLE g_hSwapChainWaitableObject = nullptr;
 ID3D12Resource* g_mainRenderTargetResource[APP_NUM_BACK_BUFFERS] = {};
 D3D12_CPU_DESCRIPTOR_HANDLE g_mainRenderTargetDescriptor[APP_NUM_BACK_BUFFERS] = {};
 
-// Forward declarations
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-void EditContent(bool& show_demo_window, bool& show_another_window, float& f, ImVec4& clear_color, int& counter, ImGuiIO& io);
-bool ProcessMessages(bool& done);
+// Forward declaration
+void CreateNoteInput(bool& show_demo_window, bool& show_another_window, float& f, ImVec4& clear_color, int& counter, ImGuiIO& io);
 
 int main(int, char**)
 {
-    // Initialize DPI and create window
-    ImGui_ImplWin32_EnableDpiAwareness();
-    float dpi_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
-
-    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
-    ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"Dear ImGui DirectX12 Example", WS_OVERLAPPEDWINDOW, 
-                                 100, 100, (int)(1280 * dpi_scale), (int)(800 * dpi_scale), nullptr, nullptr, wc.hInstance, nullptr);
+    // Create window
+    WindowContext window_context;
+    if (!CreateApplicationWindow(window_context))
+        return 1;
 
     // Initialize D3D12
-    if (!CreateDeviceD3D(hwnd))
+    if (!CreateDeviceD3D(window_context.hwnd))
     {
         CleanupDeviceD3D();
-        ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
+        DestroyApplicationWindow(window_context);
         return 1;
     }
 
-    ::ShowWindow(hwnd, SW_SHOWDEFAULT);
-    ::UpdateWindow(hwnd);
-
     // Setup ImGui
-    SetupImGui(hwnd, dpi_scale);
+    if (!SetupImGui(window_context.hwnd, window_context.dpi_scale))
+    {
+        CleanupDeviceD3D();
+        DestroyApplicationWindow(window_context);
+        return 1;
+    }
 
     // Initialize audio
     ma_device device;
     if (!InitializeAudio(device))
-        return -1;
+    {
+        ShutdownImGui();
+        CleanupDeviceD3D();
+        DestroyApplicationWindow(window_context);
+        return 1;
+    }
+
+    // Initialize MIDI
+    MidiContext midi_context;
+    InitializeMidi(midi_context, [](int note, int velocity, bool note_on) {
+        // Note names for printing
+        const char* note_names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        
+        if (note_on)
+        {
+            // Calculate octave and note name
+            int octave = (note / 12) - 1;
+            int note_index = note % 12;
+            
+            // Convert MIDI note to frequency: f = 440 * 2^((note - 69) / 12)
+            float freq = 440.0f * std::pow(2.0f, (note - 69) / 12.0f);
+            g_audioState.frequency = freq;
+            
+            // Print note information
+            printf("MIDI Note ON:  %s%d (MIDI#%d) - %.2f Hz - Velocity: %d\n", 
+                   note_names[note_index], octave, note, freq, velocity);
+        }
+        else
+        {
+            // Calculate octave and note name for note off
+            int octave = (note / 12) - 1;
+            int note_index = note % 12;
+            
+            printf("MIDI Note OFF: %s%d (MIDI#%d)\n", 
+                   note_names[note_index], octave, note);
+        }
+    });
 
     // Application state
     bool show_demo_window = true;
@@ -91,11 +128,12 @@ int main(int, char**)
     bool done = false;
     while (!done)
     {
-        if (!ProcessMessages(done))
+        if (!ProcessWindowMessages(done))
             break;
 
         // Handle minimized/occluded window
-        if ((g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) || ::IsIconic(hwnd))
+        if ((g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) || 
+            ::IsIconic(window_context.hwnd))
         {
             ::Sleep(10);
             continue;
@@ -107,7 +145,7 @@ int main(int, char**)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        EditContent(show_demo_window, show_another_window, frequency, clear_color, counter, ImGui::GetIO());
+        CreateNoteInput(show_demo_window, show_another_window, frequency, clear_color, counter, ImGui::GetIO());
 
         ImGui::Render();
         RenderFrame(clear_color);
@@ -116,95 +154,85 @@ int main(int, char**)
     WaitForPendingOperations();
 
     // Cleanup
+    CleanupMidi(midi_context);
     CleanupAudio(device);
     ShutdownImGui();
     CleanupDeviceD3D();
-    ::DestroyWindow(hwnd);
-    ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
+    DestroyApplicationWindow(window_context);
 
     return 0;
 }
 
-void EditContent(bool& show_demo_window, bool& show_another_window, float& f, ImVec4& clear_color, int& counter, ImGuiIO& io)
+void CreateNoteInput(bool& show_demo_window, bool& show_another_window, float& f, ImVec4& clear_color, int& counter, ImGuiIO& io)
 {
-    if (show_demo_window)
-        ImGui::ShowDemoWindow(&show_demo_window);
+    ImGui::Begin("12-TET Synthesizer");
 
+    // Note names for chromatic scale
+    const char* note_names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    
+    // Calculate frequency for a given note
+    // A4 (440 Hz) is note index 9 in octave 4
+    // Formula: f = 440 * 2^((n - 69) / 12) where n is MIDI note number
+    auto get_frequency = [](int octave, int note_index) -> float {
+        int midi_note = (octave + 1) * 12 + note_index; // MIDI note number (C-1 = 0, A4 = 69)
+        return 440.0f * std::pow(2.0f, (midi_note - 69) / 12.0f);
+    };
+
+    // Display current frequency
+    ImGui::Text("Current Frequency: %.2f Hz", g_audioState.frequency);
+    ImGui::Separator();
+
+    // Create piano keyboard across 3 octaves (C3 to B5)
+    for (int octave = 3; octave <= 5; ++octave)
     {
-        ImGui::Begin("Hello, world!");
-        ImGui::Text("This is some useful text.");
-        ImGui::Checkbox("Demo Window", &show_demo_window);
-        ImGui::Checkbox("Another Window", &show_another_window);
+        ImGui::Text("Octave %d", octave);
+        
+        for (int note = 0; note < 12; ++note)
+        {
+            float freq = get_frequency(octave, note);
+            
+            // Color black keys differently
+            bool is_black_key = (note == 1 || note == 3 || note == 6 || note == 8 || note == 10);
+            if (is_black_key)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+            }
+            else
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.8f, 1.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.6f, 1.0f, 1.0f));
+            }
 
-        ImGui::SliderFloat("Frequency (Hz)", &f, 20.0f, 2000.0f);
+            char button_label[32];
+            snprintf(button_label, sizeof(button_label), "%s%d##%d%d", note_names[note], octave, octave, note);
+            
+            if (ImGui::Button(button_label, ImVec2(60, 40)))
+            {
+                g_audioState.frequency = freq;
+                f = freq; // Update slider
+            }
+
+            ImGui::PopStyleColor(3);
+
+            // Layout: show 6 notes per row
+            if (note % 6 != 5)
+                ImGui::SameLine();
+        }
+        
+        ImGui::Spacing();
+    }
+
+    ImGui::Separator();
+    
+    // Manual frequency slider
+    ImGui::Text("Manual Control:");
+    if (ImGui::SliderFloat("Frequency (Hz)", &f, 20.0f, 2000.0f))
+    {
         g_audioState.frequency = f;
-
-        ImGui::ColorEdit3("clear color", (float*)&clear_color);
-
-        if (ImGui::Button("Button"))
-            counter++;
-        if (ImGui::Button("Reset Counter"))
-            counter = 0;
-
-        ImGui::SameLine();
-        ImGui::Text("counter = %d", counter);
-        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-        ImGui::End();
     }
 
-    if (show_another_window)
-    {
-        ImGui::Begin("Another Window", &show_another_window);
-        ImGui::Text("Hello from another window!");
-        if (ImGui::Button("Close Me"))
-            show_another_window = false;
-        ImGui::End();
-    }
-}
-
-bool ProcessMessages(bool& done)
-{
-    MSG msg;
-    while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE))
-    {
-        ::TranslateMessage(&msg);
-        ::DispatchMessage(&msg);
-        if (msg.message == WM_QUIT)
-        {
-            done = true;
-            return false;
-        }
-    }
-    return true;
-}
-
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-        return true;
-
-    switch (msg)
-    {
-    case WM_SIZE:
-        if (g_pd3dDevice != nullptr && wParam != SIZE_MINIMIZED)
-        {
-            CleanupRenderTarget();
-            DXGI_SWAP_CHAIN_DESC1 desc = {};
-            g_pSwapChain->GetDesc1(&desc);
-            HRESULT result = g_pSwapChain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), desc.Format, desc.Flags);
-            IM_ASSERT(SUCCEEDED(result) && "Failed to resize swapchain.");
-            CreateRenderTarget();
-        }
-        return 0;
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU)
-            return 0;
-        break;
-    case WM_DESTROY:
-        ::PostQuitMessage(0);
-        return 0;
-    }
-    return ::DefWindowProcW(hWnd, msg, wParam, lParam);
+    ImGui::End();
 }

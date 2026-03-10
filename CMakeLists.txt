@@ -9,6 +9,8 @@ add_executable(SynthPOC
     "src/audio.h" "src/audio.cpp"
     "src/imgui_setup.h" "src/imgui_setup.cpp"
     "src/renderer.h" "src/renderer.cpp"
+    "src/window.h" "src/window.cpp"
+    "src/midi.h" "src/midi.cpp"
 )
 
 target_link_libraries(SynthPOC PRIVATE imgui::imgui d3d12 dxgi d3dcompiler user32)
