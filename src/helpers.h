@@ -51,6 +51,7 @@ extern HANDLE g_fenceEvent;
 extern UINT64 g_fenceLastSignaledValue;
 extern IDXGISwapChain3* g_pSwapChain;
 extern bool g_SwapChainTearingSupport;
+extern bool g_SwapChainOccluded;
 extern HANDLE g_hSwapChainWaitableObject;
 extern ID3D12Resource* g_mainRenderTargetResource[APP_NUM_BACK_BUFFERS];
 extern D3D12_CPU_DESCRIPTOR_HANDLE g_mainRenderTargetDescriptor[APP_NUM_BACK_BUFFERS];
