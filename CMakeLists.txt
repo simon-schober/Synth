@@ -5,13 +5,13 @@ find_package(imgui CONFIG REQUIRED)
 
 add_executable(SynthPOC 
     "src/main.cpp" 
-    "src/helpers.h" "src/helpers.cpp"
+    "src/graphics_setup.h" "src/graphics_setup.cpp"
     "src/audio.h" "src/audio.cpp"
     "src/imgui_setup.h" "src/imgui_setup.cpp"
     "src/renderer.h" "src/renderer.cpp"
     "src/window.h" "src/window.cpp"
     "src/midi.h" "src/midi.cpp"
-)
+ "src/synth_interface.cpp" "src/synth_interface.h")
 
 target_link_libraries(SynthPOC PRIVATE imgui::imgui d3d12 dxgi d3dcompiler user32)
 target_compile_features(SynthPOC PRIVATE cxx_std_20)

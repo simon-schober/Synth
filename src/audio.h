@@ -15,7 +15,7 @@
 struct AudioState;
 
 // Audio callback function
-void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
+void SinWaveDataCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
 
 // Audio initialization and cleanup
 bool InitializeAudio(ma_device& device);

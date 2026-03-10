@@ -1,5 +1,5 @@
 #include "renderer.h"
-#include "helpers.h"
+#include "graphics_setup.h"
 #include "imgui_impl_dx12.h"
 
 void RenderFrame(const ImVec4& clear_color)

@@ -1,6 +1,6 @@
 #include "window.h"
 #include "imgui_impl_win32.h"
-#include "helpers.h"
+#include "graphics_setup.h"
 #include <dxgi1_5.h>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
